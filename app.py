@@ -129,16 +129,52 @@ def get_nearby_zip_codes(target_zip, radius_miles=10, max_results=5):
         logger.error(f"Error finding nearby zip codes for {target_zip} (radius {radius_miles}): {str(e)}", exc_info=True)
         return []
 
-def submit_to_external_form_pw(prospect_data, target_url, dynamic_proxy_details=None):
+# (Place near top of file, after imports/config)
+SITE_CONFIG = {
+    'elderlyhealth': {
+        'url': 'https://elderlyhealthquotes.com/medicareplans/',
+        'selectors': {
+            'lead_id_field': 'input[name="universal_leadid"]',
+            'full_name': 'input[name="fname"]',
+            'phone': 'input[name="phoneno"]',
+            'zip': 'input[name="zipcode"]',
+            'consent': '#leadid_tcpa_disclosure',
+            'submit_button': 'input[name="finish"]'
+        }
+    },
+    'seniorsinsurance': {
+        'url': 'https://seniorsinsurancequotes.com/',
+        'selectors': {
+            'lead_id_field': 'input[name="universal_leadid"]',
+            'full_name': 'input[name="fname"]',
+            'phone': 'input[name="phoneno"]',
+            'zip': 'input[name="zipcode"]',
+            'consent': '#leadid_tcpa_disclosure',
+            'submit_button': 'button[type="submit"][name="finish"]'
+        }
+    }
+}
+
+def submit_to_external_form_pw(prospect_data, target_site_key, dynamic_proxy_details=None):
     """
-    Submits prospect data using Playwright to the specified target URL.
+    Submits prospect data using Playwright to the specified target site.
     Args:
         prospect_data (dict): Contains 'full_name', 'phone', 'zip'.
-        target_url (str): The URL of the external form to submit to.
-        dynamic_proxy_details (dict): Contains 'host', 'port', 'user', 'pass' for proxy, or None.
+        target_site_key (str): The key identifying the target site (e.g., 'elderlyhealth').
+        dynamic_proxy_details (dict): Proxy config or None.
     Returns:
         tuple: (status_code, message_string, captured_lead_id or None)
     """
+    # --- Get site config based on key ---
+    if target_site_key not in SITE_CONFIG:
+        logger.error(f"Invalid target_site_key passed: {target_site_key}")
+        return STATUS_UNKNOWN_FAIL, f"Invalid target site key: {target_site_key}", None
+
+    site_info = SITE_CONFIG[target_site_key]
+    target_url = site_info['url']
+    selectors = site_info['selectors'] # Get the correct selectors dict
+    logger.info(f"Targeting site '{target_site_key}' at URL: {target_url}")
+
     # --- Initialize variables ---
     browser = None
     context = None
@@ -284,89 +320,86 @@ def submit_to_external_form_pw(prospect_data, target_url, dynamic_proxy_details=
                 page.wait_for_load_state('load', timeout=30000)
                 logger.info("Load event fired.")
                 try:
-                    logger.info("Waiting for network idle (up to 30s)...")
-                    page.wait_for_load_state('networkidle', timeout=30000)
+                    # Increase network idle timeout, but don't fail immediately if it times out
+                    page.wait_for_load_state('networkidle', timeout=45000)
                     logger.info("Network is idle.")
                 except PlaywrightTimeoutError:
                     logger.warning("Timed out waiting for network idle. Proceeding anyway...")
                 logger.info("Navigation and waits complete.")
-            except PlaywrightError as nav_err:
-                logger.error(f"Navigation to target page failed: {nav_err}")
-                err_str = str(nav_err).lower()
-                if "proxy" in err_str or "tunnel" in err_str or "epipe" in err_str:
-                     return STATUS_PROXY_CONNECT_FAIL, f"Navigation via proxy failed: {nav_err}", None
-                elif "timeout" in err_str:
-                     return STATUS_NAVIGATION_FAIL, f"Navigation timed out: {nav_err}", None
-                else:
-                     return STATUS_NAVIGATION_FAIL, f"Navigation failed: {nav_err}", None
-            # Removed general exception catch here
+            except (PlaywrightError, Exception) as nav_err:
+                logger.error(f"Navigation to {target_url} failed: {nav_err}")
+                # Determine if it's proxy or navigation fail based on context if possible
+                return STATUS_NAVIGATION_FAIL, f"Navigation failed: {nav_err}", None
 
-            # --- 6. Wait for Essential Form Elements ---
+            # --- 6. Wait for Essential Form Elements --- (USING DYNAMIC SELECTORS)
             try:
                 logger.info("Waiting for essential form elements to be ready...")
-                page.locator('input[name="fname"]').wait_for(state='visible', timeout=30000)
-                page.locator('input[name="universal_leadid"]').wait_for(state='attached', timeout=15000)
-                page.locator('#leadid_tcpa_disclosure').wait_for(state='attached', timeout=10000)
-                page.locator('input[name="finish"]').wait_for(state='attached', timeout=10000)
+                # Wait for a key element like the submit button using the site-specific selector
+                page.locator(selectors['submit_button']).wait_for(state='visible', timeout=20000) # Increased timeout
                 logger.info("Form elements seem ready.")
-            except PlaywrightError as wait_err:
+            except PlaywrightTimeoutError as wait_err:
                  logger.error(f"Timed out waiting for essential form elements: {wait_err}")
+                 try: page.screenshot(path='form_elements_timeout.png') # Screenshot on failure
+                 except: pass
                  return STATUS_AUTOMATION_FAIL, f"Page did not load required form elements: {wait_err}", None
-            # Removed general exception catch here
 
-            # --- 7. Extract Lead ID (Moved before filling, but read just before submit) ---
-            # We wait for existence here, but read value later
+            # --- 7. Extract Lead ID (USING DYNAMIC SELECTOR) ---
             try:
-                 logger.info("Confirming lead ID field exists...")
-                 page.locator('input[name="universal_leadid"]').wait_for(state='attached', timeout=10000)
-                 logger.info("Lead ID input field found.")
-            except PlaywrightError as lead_wait_err:
-                 logger.error(f"Could not confirm existence of Lead ID field: {lead_wait_err}")
-                 return STATUS_AUTOMATION_FAIL, f"Could not find Lead ID field: {lead_wait_err}", None
+                logger.info("Confirming lead ID field exists...")
+                page.locator(selectors['lead_id_field']).wait_for(state='attached', timeout=5000) # Just check existence
+                logger.info("Lead ID input field found.")
+            except PlaywrightTimeoutError as lead_wait_err:
+                 logger.warning(f"Could not find Lead ID field ({selectors['lead_id_field']}) within timeout: {lead_wait_err}")
+                 # Don't fail here, maybe it appears later or isn't needed
+                 pass # Continue without failing
 
-            # --- 8. Fill Form ---
+            # --- 8. Fill Form --- (USING DYNAMIC SELECTORS)
             try:
                 logger.info(f"Filling form with data: {prospect_data['full_name']}, {prospect_data['phone']}, {prospect_data['zip']}")
-                page.locator('input[name="fname"]').fill(prospect_data['full_name'])
-                page.locator('input[name="phoneno"]').fill(prospect_data['phone'])
-                page.locator('input[name="zipcode"]').fill(prospect_data['zip'])
+                page.locator(selectors['full_name']).fill(prospect_data['full_name'])
+                page.locator(selectors['phone']).fill(prospect_data['phone'])
+                page.locator(selectors['zip']).fill(prospect_data['zip'])
                 logger.info("Form fields filled.")
             except PlaywrightError as fill_err:
-                logger.error(f"Error filling form fields: {fill_err}")
-                return STATUS_AUTOMATION_FAIL, f"Failed to fill form field: {fill_err}", None
+                 logger.error(f"Failed to fill form field: {fill_err}")
+                 return STATUS_AUTOMATION_FAIL, f"Failed to fill form field: {fill_err}", None
 
-            # --- 9. Check Consent Box ---
+            # --- 9. Check Consent Box --- (USING DYNAMIC SELECTOR)
             try:
                 logger.info("Checking consent box...")
-                consent_locator = page.locator('#leadid_tcpa_disclosure')
-                consent_locator.wait_for(state='visible', timeout=10000)
-                consent_locator.check(timeout=5000)
+                consent_locator = page.locator(selectors['consent'])
+                consent_locator.wait_for(state='visible', timeout=5000)
+                consent_locator.check()
                 logger.info("Consent box checked.")
-                page.wait_for_timeout(500) # Small delay after check
+            except PlaywrightTimeoutError:
+                 logger.warning(f"Consent box ({selectors['consent']}) not found or visible within timeout.")
+                 # Decide if this is critical. For now, we warn and continue.
+                 pass
             except PlaywrightError as consent_err:
-                logger.error(f"Could not check consent box: {consent_err}")
-                return STATUS_AUTOMATION_FAIL, f"Failed to check consent box: {consent_err}", None
+                 logger.error(f"Failed to check consent box: {consent_err}")
+                 return STATUS_AUTOMATION_FAIL, f"Failed to check consent box: {consent_err}", None
 
-            # --- 10. Extract Lead ID (Immediately Before Submit) ---
-            # Now read the value
+            # --- 10. Extract Lead ID (Immediately Before Submit) --- (USING DYNAMIC SELECTOR)
             lead_id = None # Initialize before try
             try:
                 logger.info("Extracting final Lead ID just before submit...")
-                lead_id_locator = page.locator('input[name="universal_leadid"]')
-                lead_id = lead_id_locator.input_value(timeout=5000)
-                if not lead_id:
-                    logger.error("Lead ID field value is empty right before submit.")
-                    page.screenshot(path='lead_id_empty_before_submit.png')
-                    return STATUS_AUTOMATION_FAIL, "Lead ID value was empty before submit.", None
-                logger.info(f"Lead ID extracted just before submit: {lead_id}")
+                lead_id_locator = page.locator(selectors['lead_id_field'])
+                if lead_id_locator.count() > 0:
+                     lead_id = lead_id_locator.input_value(timeout=5000)
+                     if lead_id:
+                         logger.info(f"Lead ID extracted just before submit: {lead_id}")
+                     else:
+                         logger.warning("Lead ID field found but value is empty.")
+                else:
+                    logger.warning("Lead ID field not present when trying to read value.")
             except PlaywrightError as lead_err:
-                logger.error(f"Could not get Lead ID value right before submit: {lead_err}")
-                return STATUS_AUTOMATION_FAIL, f"Could not extract Lead ID before submit: {lead_err}", None # lead_id is None here
+                 logger.error(f"Could not extract Lead ID before submit: {lead_err}")
+                 # Don't fail here, just log it. lead_id remains None.
 
-            # --- 11. Click Submit Button ---
+            # --- 11. Click Submit Button --- (USING DYNAMIC SELECTOR)
             try:
                 logger.info("Attempting to click submit button...")
-                submit_button = page.locator('input[name="finish"]')
+                submit_button = page.locator(selectors['submit_button'])
                 if not submit_button.is_visible():
                     logger.warning("Submit button not immediately visible, waiting...")
                     submit_button.wait_for(state='visible', timeout=10000)
@@ -376,7 +409,7 @@ def submit_to_external_form_pw(prospect_data, target_url, dynamic_proxy_details=
                     # Wait for button to potentially become enabled (adjust timeout as needed)
                     # This is tricky, maybe a specific condition is better if known
                     try:
-                        page.wait_for_function("() => document.querySelector('{}').disabled === false".format('input[name="finish"]'), timeout=5000)
+                        page.wait_for_function("() => document.querySelector('{}').disabled === false".format(selectors['submit_button']), timeout=5000)
                     except PlaywrightTimeoutError:
                         logger.error("Submit button did not become enabled.")
                         raise Exception("Submit button did not become enabled.")
@@ -595,8 +628,8 @@ def index():
         # --- Call the Playwright submission function --- Level 2 Indent
         try: # Level 2 Indent
             logger.info(f"Calling {submission_function.__name__} for zip {current_zip} to URL {target_url}...") # Log URL
-            # Pass the target_url to the submission function
-            status, message, lead_id = submission_function(prospect_data, target_url, dynamic_proxy_details)
+            # Pass the target_site KEY to the submission function
+            status, message, lead_id = submission_function(prospect_data, target_site, dynamic_proxy_details)
             logger.info(f"Call finished for zip {current_zip}. Status: {status}, Message: {message}, LeadID: {lead_id}") # Log after calling
 
             # Store results of this latest attempt
