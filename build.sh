@@ -5,8 +5,12 @@ set -o errexit
 # Install dependencies
 pip install -r requirements.txt
 
-# Install Playwright without browser download
-PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 pip install playwright
+# Install Playwright
+pip install playwright
+
+# Install Playwright browsers (with explicit path)
+python -m playwright install chromium
+python -m playwright install-deps
 
 # Use specific version of Playwright browsers that's known to work on Render
 mkdir -p $HOME/.cache/ms-playwright
