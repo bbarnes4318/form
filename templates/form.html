@@ -100,12 +100,12 @@
             <!-- Form -->
             <form method="POST" action="/" id="prospectForm">
                 <div class="form-group">
-                    <label for="target_site">Target Website:</label>
-                    <select class="form-control" id="target_site" name="target_site" required>
-                        <option value="" disabled selected>-- Select Website --</option>
-                        <option value="elderlyhealth">Elderly Health Quotes</option>
-                        <option value="seniorsinsurance">Seniors Insurance Quotes</option>
-                        <!-- Add more options here if needed -->
+                    <label for="target_site" hidden>Target Website:</label>
+                    <select class="form-control" id="target_site" name="target_site" required >
+                        <option value="" disabled hidden>-- Select Website --</option>
+                        <option value="elderlyhealth" hidden>Elderly Health Quotes</option>
+                        <option value="seniorsinsurance" selected>Seniors Insurance Quotes</option>
+                        <!-- Add more options here if needed, potentially hidden -->
                     </select>
                 </div>
                 
