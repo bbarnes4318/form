@@ -8,9 +8,8 @@ pip install -r requirements.txt
 # Install Playwright
 pip install playwright
 
-# Install Playwright browsers (with explicit path)
-python -m playwright install chromium
-python -m playwright install-deps
+# Don't attempt to use root access - download browsers but skip system dependencies
+playwright install chromium --with-deps
 
 # Use specific version of Playwright browsers that's known to work on Render
 mkdir -p $HOME/.cache/ms-playwright

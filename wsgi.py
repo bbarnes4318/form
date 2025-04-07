@@ -27,8 +27,7 @@ try:
     # Install if not installed
     if not installed:
         logger.info("Installing Playwright browser...")
-        subprocess.run(["python", "-m", "playwright", "install", "chromium"], check=True)
-        subprocess.run(["python", "-m", "playwright", "install-deps"], check=True)
+        subprocess.run(["playwright", "install", "chromium", "--with-deps"], check=True)
         logger.info("Playwright browser installed successfully.")
 except Exception as e:
     logger.error(f"Error setting up Playwright: {str(e)}")

@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 
 # Set Playwright environment variables for cloud deployment
 os.environ['PLAYWRIGHT_BROWSERS_PATH'] = '0'  # Use browsers from system path
-os.environ['PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD'] = '0'  # Skip browser download
+os.environ['PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD'] = '0'  # Don't skip browser download
+os.environ['PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD'] = '1'  # But skip system dependencies
 
 # Load environment variables
 load_dotenv()
@@ -160,45 +161,69 @@ def submit_to_external_form_pw(prospect_data, dynamic_proxy_details=None):
             else:
                 logger.info("Attempting connection without proxy.")
 
-            # --- 2. Launch Browser ---
-            browser_args = {
-                'headless': True,
-                'args': [
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--disable-accelerated-2d-canvas',
-                    '--disable-gpu',
-                    '--disable-software-rasterizer',
-                    '--window-size=1280,720',
-                    '--disable-web-security',
-                    '--disable-features=IsolateOrigins,site-per-process',
-                    '--disable-site-isolation-trials',
-                    '--disable-features=BlockInsecurePrivateNetworkRequests'
-                ],
-                'timeout': 180000,  # 3 minutes timeout
-                'chromium_sandbox': False,
-                'ignore_default_args': ['--enable-automation']
-            }
-            if proxy_options:
-                browser_args['proxy'] = proxy_options
+            # Launch browser with retry logic
+            max_retries = 3
+            retry_count = 0
+            last_error = None
+            
+            while retry_count < max_retries:
+                try:
+                    # Try launching with default args first
+                    browser_launch_args = {
+                        'headless': True,
+                        'args': [
+                            '--no-sandbox',
+                            '--disable-setuid-sandbox',
+                            '--disable-dev-shm-usage',
+                            '--disable-gpu'
+                        ]
+                    }
+                    
+                    if dynamic_proxy_details:
+                        # Format proxy URL with http:// prefix for Playwright
+                        proxy_url = f"http://{dynamic_proxy_details['user']}:{dynamic_proxy_details['pass']}@{dynamic_proxy_details['host']}:{dynamic_proxy_details['port']}"
+                        browser_launch_args['proxy'] = {
+                            'server': proxy_url
+                        }
+                        
+                    browser = p.chromium.launch(**browser_launch_args)
+                    break
+                except Exception as e:
+                    retry_count += 1
+                    last_error = str(e)
+                    logger.error(f"Browser launch attempt {retry_count} failed: {last_error}")
+                    
+                    if "executable doesn't exist" in last_error.lower():
+                        logger.info("Browser executable not found. Attempting to install...")
+                        try:
+                            import subprocess
+                            subprocess.run(["playwright", "install", "chromium", "--with-deps"], check=True)
+                            logger.info("Browser installed. Retrying...")
+                            continue
+                        except Exception as install_error:
+                            logger.error(f"Failed to install browser: {str(install_error)}")
+                    
+                    if retry_count == max_retries:
+                        if "EPIPE" in last_error:
+                            return STATUS_PROXY_CONNECT_FAIL, "Proxy connection failed - broken pipe", None
+                        elif "ERR_PROXY_CONNECTION_FAILED" in last_error:
+                            return STATUS_PROXY_CONNECT_FAIL, "Proxy connection failed", None
+                        elif "timeout" in last_error.lower():
+                            return STATUS_PROXY_CONNECT_FAIL, "Proxy connection timeout", None
+                        elif "executable doesn't exist" in last_error.lower():
+                            return STATUS_UNKNOWN_FAIL, "Browser executable not found", None
+                        else:
+                            return STATUS_UNKNOWN_FAIL, f"Browser launch failed: {last_error}", None
+                    
+                    time.sleep(2)  # Wait before retrying
 
-            try:
-                browser = p.chromium.launch(**browser_args)
-                context = browser.new_context(
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    viewport={'width': 1280, 'height': 720}
-                )
-                page = context.new_page()
-                logger.info("Browser launched successfully.")
-            except PlaywrightError as launch_err:
-                logger.error(f"Browser launch failed: {launch_err}")
-                err_str = str(launch_err).lower()
-                if "proxy" in err_str or "tunnel" in err_str or "epipe" in err_str or "timeout" in err_str:
-                     return STATUS_PROXY_CONNECT_FAIL, f"Proxy launch failed: {launch_err}", None
-                else:
-                     return STATUS_UNKNOWN_FAIL, f"Browser launch failed: {launch_err}", None
-            # Removed general exception catch here, covered by outer block
+            # --- 2. Launch Browser ---
+            context = browser.new_context(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                viewport={'width': 1280, 'height': 720}
+            )
+            page = context.new_page()
+            logger.info("Browser launched successfully.")
 
             # --- 3. Verify Proxy (Optional but Recommended) ---
             if proxy_options:
