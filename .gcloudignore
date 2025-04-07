@@ -12,8 +12,24 @@
 # below:
 .git
 .gitignore
-
-# Python pycache:
+.env
 __pycache__/
-# Ignored by the build system
-/setup.cfg
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
