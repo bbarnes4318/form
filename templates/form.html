@@ -3,13 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Form Submission</title>
+    <title>Internal Prospect Entry Form</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body {
+            padding-top: 2rem;
+            background-color: #f8f9fa;
             font-family: Arial, sans-serif;
             max-width: 800px;
             margin: 0 auto;
             padding: 20px;
+        }
+        .form-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 2rem;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .form-title {
+            margin-bottom: 1.5rem;
+            color: #333;
+            text-align: center;
+        }
+        .alert {
+            margin-top: 1rem;
+        }
+        .note {
+            margin-top: 1.5rem;
+            padding: 0.75rem;
+            background-color: #f8f9fa;
+            border-left: 4px solid #6c757d;
+            font-size: 0.9rem;
         }
         .form-group {
             margin-bottom: 15px;
@@ -17,19 +43,17 @@
         label {
             display: block;
             margin-bottom: 5px;
-            font-weight: bold;
         }
-        input {
+        input[type="text"] {
             width: 100%;
             padding: 8px;
-            box-sizing: border-box;
             border: 1px solid #ddd;
             border-radius: 4px;
         }
         button {
             background-color: #4CAF50;
             color: white;
-            padding: 10px 15px;
+            padding: 10px 20px;
             border: none;
             border-radius: 4px;
             cursor: pointer;
@@ -39,56 +63,100 @@
         }
         .flash-message {
             padding: 10px;
-            margin-bottom: 15px;
+            margin: 10px 0;
             border-radius: 4px;
         }
         .flash-message.success {
             background-color: #dff0d8;
-            color: #3c763d;
             border: 1px solid #d6e9c6;
+            color: #3c763d;
         }
         .flash-message.error {
             background-color: #f2dede;
-            color: #a94442;
             border: 1px solid #ebccd1;
+            color: #a94442;
         }
         .flash-message.warning {
             background-color: #fcf8e3;
-            color: #8a6d3b;
             border: 1px solid #faebcc;
+            color: #8a6d3b;
         }
     </style>
 </head>
 <body>
-    <h1>Form Submission</h1>
-    
-    {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-            {% for category, message in messages %}
-                <div class="flash-message {{ category }}">
-                    {{ message }}
+    <div class="container">
+        <div class="form-container">
+            <h2 class="form-title">Internal Prospect Entry Form</h2>
+            
+            <!-- Flash Messages Section -->
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="flash-message {{ category }}">{{ message }}</div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+            
+            <!-- Form -->
+            <form method="POST" action="/" id="prospectForm">
+                <div class="form-group">
+                    <label for="target_site">Target Website:</label>
+                    <select class="form-control" id="target_site" name="target_site" required>
+                        <option value="" disabled selected>-- Select Website --</option>
+                        <option value="elderlyhealth">Elderly Health Quotes</option>
+                        <option value="seniorsinsurance">Seniors Insurance Quotes</option>
+                        <!-- Add more options here if needed -->
+                    </select>
                 </div>
-            {% endfor %}
-        {% endif %}
-    {% endwith %}
+                
+                <div class="form-group">
+                    <label for="full_name">Full Name:</label>
+                    <input type="text" class="form-control" id="full_name" name="full_name" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="phone">Phone Number:</label>
+                    <input type="tel" class="form-control" id="phone" name="phone" 
+                           pattern="[0-9]{10}" placeholder="10-digit phone number" required>
+                    <div class="form-text">Enter a 10-digit phone number without spaces or dashes.</div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="zip_code">Zip Code:</label>
+                    <input type="text" class="form-control" id="zip_code" name="zip_code" 
+                           pattern="[0-9]{5}" placeholder="5-digit zip code" required>
+                </div>
+                
+                <div class="d-grid gap-2">
+                    <button type="submit" class="btn btn-primary">Submit</button>
+                </div>
+            </form>
+            
+            <!-- Submission Delay Note -->
+            <div class="note">
+                <strong>Note:</strong> Form submission may take 60-120 seconds to complete due to automated processing. 
+                Please do not close this window or refresh the page during submission.
+            </div>
+        </div>
+    </div>
     
-    <form method="post" action="/">
-        <div class="form-group">
-            <label for="full_name">Full Name:</label>
-            <input type="text" class="form-control" id="full_name" name="full_name" required>
-        </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Disable form resubmission on page refresh
+        if (window.history.replaceState) {
+            window.history.replaceState(null, null, window.location.href);
+        }
         
-        <div class="form-group">
-            <label for="phone">Phone Number:</label>
-            <input type="tel" class="form-control" id="phone" name="phone" required>
-        </div>
-        
-        <div class="form-group">
-            <label for="zip_code">Zip Code:</label>
-            <input type="text" class="form-control" id="zip_code" name="zip_code" required>
-        </div>
-        
-        <button type="submit" class="btn btn-primary">Submit</button>
-    </form>
+        // Form submission handling
+        document.getElementById('prospectForm').addEventListener('submit', function(e) {
+            // Show loading state
+            const submitButton = this.querySelector('button[type="submit"]');
+            const originalText = submitButton.textContent;
+            submitButton.disabled = true;
+            submitButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Processing...';
+            
+            // The form will submit normally, but the button will show loading state
+        });
+    </script>
 </body>
 </html> 

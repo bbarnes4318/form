@@ -129,11 +129,12 @@ def get_nearby_zip_codes(target_zip, radius_miles=10, max_results=5):
         logger.error(f"Error finding nearby zip codes for {target_zip} (radius {radius_miles}): {str(e)}", exc_info=True)
         return []
 
-def submit_to_external_form_pw(prospect_data, dynamic_proxy_details=None):
+def submit_to_external_form_pw(prospect_data, target_url, dynamic_proxy_details=None):
     """
-    Submits prospect data using Playwright to elderlyhealthquotes.com.
+    Submits prospect data using Playwright to the specified target URL.
     Args:
         prospect_data (dict): Contains 'full_name', 'phone', 'zip'.
+        target_url (str): The URL of the external form to submit to.
         dynamic_proxy_details (dict): Contains 'host', 'port', 'user', 'pass' for proxy, or None.
     Returns:
         tuple: (status_code, message_string, captured_lead_id or None)
@@ -143,8 +144,6 @@ def submit_to_external_form_pw(prospect_data, dynamic_proxy_details=None):
     context = None
     page = None
     lead_id = None # Initialize lead_id here
-    target_url = 'https://elderlyhealthquotes.com/medicareplans/'
-    success_indicator_selector = 'h4.modal-title:has-text("Thank You")' # Verify this selector
 
     # --- Main Try Block ---
     try: # <-- Start of main try block (Level 1 Indent)
@@ -498,11 +497,26 @@ def index():
     full_name = request.form.get('full_name', '').strip()
     phone = request.form.get('phone', '').strip()
     zip_code = request.form.get('zip_code', '').strip() # Renamed for clarity
+    target_site = request.form.get('target_site', '').strip() # Get the selected site URL
+
+    # --- Site URL Mapping --- (Add more as needed)
+    valid_sites = {
+        'elderlyhealth': 'https://elderlyhealthquotes.com/medicareplans/',
+        'seniorsinsurance': 'https://seniorsinsurancequotes.com/'
+    }
 
     # Basic validation
-    if not all([full_name, phone, zip_code]):
-        flash('All fields (Full Name, Phone, Zip Code) are required.', 'error')
+    if not all([full_name, phone, zip_code, target_site]):
+        flash('All fields (Full Name, Phone, Zip Code, Target Site) are required.', 'error')
         return render_template('form.html')
+
+    # Validate target_site selection
+    if target_site not in valid_sites:
+        flash('Invalid target site selected.', 'error')
+        return render_template('form.html')
+
+    target_url = valid_sites[target_site] # Get the actual URL from the selected key
+
     # Basic check for space, assuming First Last format
     if ' ' not in full_name:
         flash('Please enter both first and last name in Full Name.', 'error')
@@ -580,8 +594,9 @@ def index():
 
         # --- Call the Playwright submission function --- Level 2 Indent
         try: # Level 2 Indent
-            logger.info(f"Calling submit_to_external_form_pw for zip {current_zip}...") # Log before calling
-            status, message, lead_id = submission_function(prospect_data, dynamic_proxy_details)
+            logger.info(f"Calling {submission_function.__name__} for zip {current_zip} to URL {target_url}...") # Log URL
+            # Pass the target_url to the submission function
+            status, message, lead_id = submission_function(prospect_data, target_url, dynamic_proxy_details)
             logger.info(f"Call finished for zip {current_zip}. Status: {status}, Message: {message}, LeadID: {lead_id}") # Log after calling
 
             # Store results of this latest attempt
