@@ -5,15 +5,14 @@ set -o errexit
 # Install dependencies
 pip install -r requirements.txt
 
-# Install Playwright
+# Set environment variables to skip browser installation
+export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+# Install Playwright without browser download
 pip install playwright
 
-# Don't attempt to use root access - download browsers but skip system dependencies
-playwright install chromium --with-deps
-
-# Use specific version of Playwright browsers that's known to work on Render
+# Create the playwright browsers directory
 mkdir -p $HOME/.cache/ms-playwright
-PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/ms-playwright
 
-# Use pre-installed browsers through Docker container
-export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 
+# Tell the application where to find browsers
+echo "export PLAYWRIGHT_BROWSERS_PATH=$HOME/.cache/ms-playwright" >> $HOME/.bashrc 

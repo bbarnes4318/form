@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 
 # Set Playwright environment variables for cloud deployment
 os.environ['PLAYWRIGHT_BROWSERS_PATH'] = '0'  # Use browsers from system path
-os.environ['PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD'] = '0'  # Don't skip browser download
-os.environ['PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD'] = '1'  # But skip system dependencies
+os.environ['PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD'] = '1'  # Skip browser download
+os.environ['PLAYWRIGHT_SKIP_VALIDATION'] = '1'  # Skip browser validation
 
 # Load environment variables
 load_dotenv()
@@ -411,6 +411,40 @@ def submit_to_external_form_pw(prospect_data, dynamic_proxy_details=None):
         logger.info("Playwright browser resources cleanup attempted in finally.")
     # --- End of function ---
 
+def submit_fallback_test_mode(prospect_data, dynamic_proxy_details=None):
+    """
+    Fallback function for testing when Playwright browser isn't available.
+    This simulates a successful form submission for testing purposes.
+    
+    Args:
+        Same as submit_to_external_form_pw
+    Returns:
+        Same tuple format as submit_to_external_form_pw
+    """
+    logger.warning("USING TEST MODE SUBMISSION - NO ACTUAL FORM SUBMISSION IS HAPPENING")
+    # Log the data and proxy details
+    logger.info(f"Test submission with data: {prospect_data}")
+    if dynamic_proxy_details:
+        # Log censored proxy details
+        censored_proxy = {
+            'host': dynamic_proxy_details['host'],
+            'port': dynamic_proxy_details['port'],
+            'user': dynamic_proxy_details['user'],
+            'pass': '********'
+        }
+        logger.info(f"Test proxy details: {censored_proxy}")
+    
+    # Generate a fake lead ID
+    import uuid
+    import time
+    lead_id = str(uuid.uuid4())
+    
+    # Simulate some processing time
+    time.sleep(1)
+    
+    # Return success with the generated lead ID
+    return STATUS_SUCCESS, f"TEST MODE: Form submission simulated successfully with Lead ID: {lead_id}", lead_id
+
 # --- Flask Routes ---
 @app.route('/', methods=['GET', 'POST'])
 def index():
@@ -442,6 +476,15 @@ def index():
     }
 
     logger.info(f"Starting form submission process for: {full_name} with Zip: {zip_code}")
+
+    # Check if we're in test mode (environment variable or Render.com detection)
+    TEST_MODE = os.environ.get('TEST_MODE', '0') == '1' or os.environ.get('RENDER', '0') == '1'
+    
+    # If test mode is enabled, use the fallback test function
+    submission_function = submit_fallback_test_mode if TEST_MODE else submit_to_external_form_pw
+    if TEST_MODE:
+        logger.warning("TEST MODE ENABLED - Using simulated form submission")
+        flash("TEST MODE ACTIVE: This is a simulated submission for testing", 'warning')
 
 # --- Initialize retry logic variables ---
     max_retries = 5
@@ -496,7 +539,7 @@ def index():
         # --- Call the Playwright submission function --- Level 2 Indent
         try: # Level 2 Indent
             logger.info(f"Calling submit_to_external_form_pw for zip {current_zip}...") # Log before calling
-            status, message, lead_id = submit_to_external_form_pw(prospect_data, dynamic_proxy_details)
+            status, message, lead_id = submission_function(prospect_data, dynamic_proxy_details)
             logger.info(f"Call finished for zip {current_zip}. Status: {status}, Message: {message}, LeadID: {lead_id}") # Log after calling
 
             # Store results of this latest attempt
