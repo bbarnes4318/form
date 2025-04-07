@@ -170,7 +170,7 @@ def submit_to_external_form_pw(prospect_data, dynamic_proxy_details=None):
                 try:
                     # Try launching with default args first
                     browser_launch_args = {
-                        'headless': True,
+                        'headless': False,
                         'args': [
                             '--no-sandbox',
                             '--disable-setuid-sandbox',
@@ -218,14 +218,50 @@ def submit_to_external_form_pw(prospect_data, dynamic_proxy_details=None):
                     time.sleep(2)  # Wait before retrying
 
             # --- 2. Launch Browser ---
-            context = browser.new_context(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                viewport={'width': 1280, 'height': 720}
-            )
-            page = context.new_page()
-            logger.info("Browser launched successfully.")
+            try: # Level 3 Indent
+                # Try launching with default args first
+                browser_launch_args = {
+                    'headless': False,
+                    'args': [
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-dev-shm-usage',
+                        '--disable-gpu'
+                    ]
+                }
 
-            # --- 3. Verify Proxy (Optional but Recommended) ---
+                if proxy_options:
+                    browser_launch_args['proxy'] = proxy_options
+
+                browser = p.chromium.launch(**browser_launch_args)
+                logger.info("Browser launched successfully (non-headless).")
+
+            except PlaywrightError as launch_err:
+                logger.error(f"Browser launch failed: {launch_err}")
+                err_str = str(launch_err).lower()
+                if "protocol error" in err_str or "browser has disconnected" in err_str or "cannot connect" in err_str:
+                     return STATUS_AUTOMATION_FAIL, f"Non-headless launch failed (check environment/Xvfb): {launch_err}", None
+                elif "proxy" in err_str or "tunnel" in err_str or "epipe" in err_str or "timeout" in err_str:
+                     return STATUS_PROXY_CONNECT_FAIL, f"Proxy launch failed: {launch_err}", None
+                else:
+                     return STATUS_UNKNOWN_FAIL, f"Browser launch failed: {launch_err}", None
+
+            # --- 3. Create Context and Page ---
+            try: # Level 3 Indent
+                context = browser.new_context(
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    viewport={'width': 1280, 'height': 720}
+                )
+                page = context.new_page()
+                logger.info("Browser context and page created.")
+            except PlaywrightError as context_err:
+                 logger.error(f"Failed to create browser context/page: {context_err}")
+                 if browser:
+                     try: browser.close()
+                     except: pass
+                 return STATUS_AUTOMATION_FAIL, f"Context creation failed: {context_err}", None
+
+            # --- 4. Verify Proxy (Optional but Recommended) ---
             if proxy_options:
                 try:
                     logger.info("Verifying proxy connection via ipify.org...")
@@ -241,7 +277,7 @@ def submit_to_external_form_pw(prospect_data, dynamic_proxy_details=None):
                         return STATUS_NAVIGATION_FAIL, f"Proxy verification navigation failed: {verify_err}", None
                 # Removed general exception catch here
 
-            # --- 4. Navigate to Target Form ---
+            # --- 5. Navigate to Target Form ---
             try:
                 logger.info(f"Navigating to target page: {target_url}...")
                 page.goto(target_url, wait_until='domcontentloaded', timeout=60000)
@@ -266,7 +302,7 @@ def submit_to_external_form_pw(prospect_data, dynamic_proxy_details=None):
                      return STATUS_NAVIGATION_FAIL, f"Navigation failed: {nav_err}", None
             # Removed general exception catch here
 
-            # --- 5. Wait for Essential Form Elements ---
+            # --- 6. Wait for Essential Form Elements ---
             try:
                 logger.info("Waiting for essential form elements to be ready...")
                 page.locator('input[name="fname"]').wait_for(state='visible', timeout=30000)
@@ -279,7 +315,7 @@ def submit_to_external_form_pw(prospect_data, dynamic_proxy_details=None):
                  return STATUS_AUTOMATION_FAIL, f"Page did not load required form elements: {wait_err}", None
             # Removed general exception catch here
 
-            # --- 6. Extract Lead ID (Moved before filling, but read just before submit) ---
+            # --- 7. Extract Lead ID (Moved before filling, but read just before submit) ---
             # We wait for existence here, but read value later
             try:
                  logger.info("Confirming lead ID field exists...")
@@ -289,7 +325,7 @@ def submit_to_external_form_pw(prospect_data, dynamic_proxy_details=None):
                  logger.error(f"Could not confirm existence of Lead ID field: {lead_wait_err}")
                  return STATUS_AUTOMATION_FAIL, f"Could not find Lead ID field: {lead_wait_err}", None
 
-            # --- 7. Fill Form ---
+            # --- 8. Fill Form ---
             try:
                 logger.info(f"Filling form with data: {prospect_data['full_name']}, {prospect_data['phone']}, {prospect_data['zip']}")
                 page.locator('input[name="fname"]').fill(prospect_data['full_name'])
@@ -300,7 +336,7 @@ def submit_to_external_form_pw(prospect_data, dynamic_proxy_details=None):
                 logger.error(f"Error filling form fields: {fill_err}")
                 return STATUS_AUTOMATION_FAIL, f"Failed to fill form field: {fill_err}", None
 
-            # --- 8. Check Consent Box ---
+            # --- 9. Check Consent Box ---
             try:
                 logger.info("Checking consent box...")
                 consent_locator = page.locator('#leadid_tcpa_disclosure')
@@ -312,7 +348,7 @@ def submit_to_external_form_pw(prospect_data, dynamic_proxy_details=None):
                 logger.error(f"Could not check consent box: {consent_err}")
                 return STATUS_AUTOMATION_FAIL, f"Failed to check consent box: {consent_err}", None
 
-            # --- 9. Extract Lead ID (Immediately Before Submit) ---
+            # --- 10. Extract Lead ID (Immediately Before Submit) ---
             # Now read the value
             lead_id = None # Initialize before try
             try:
@@ -328,7 +364,7 @@ def submit_to_external_form_pw(prospect_data, dynamic_proxy_details=None):
                 logger.error(f"Could not get Lead ID value right before submit: {lead_err}")
                 return STATUS_AUTOMATION_FAIL, f"Could not extract Lead ID before submit: {lead_err}", None # lead_id is None here
 
- # --- 10. Click Submit Button ---
+ # --- 11. Click Submit Button ---
             try:
                 logger.info("Attempting to click submit button...")
                 submit_locator = page.locator('input[name="finish"]')
