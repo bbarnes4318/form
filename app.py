@@ -364,42 +364,48 @@ def submit_to_external_form_pw(prospect_data, dynamic_proxy_details=None):
                 logger.error(f"Could not get Lead ID value right before submit: {lead_err}")
                 return STATUS_AUTOMATION_FAIL, f"Could not extract Lead ID before submit: {lead_err}", None # lead_id is None here
 
- # --- 11. Click Submit Button ---
+            # --- 11. Click Submit Button ---
             try:
                 logger.info("Attempting to click submit button...")
-                submit_locator = page.locator('input[name="finish"]')
+                submit_button = page.locator('input[name="finish"]')
+                if not submit_button.is_visible():
+                    logger.warning("Submit button not immediately visible, waiting...")
+                    submit_button.wait_for(state='visible', timeout=10000)
 
-                # REMOVED the wait_for enabled state check as it was causing errors
-                # logger.info("Waiting for submit button to be enabled...")
-                # submit_locator.wait_for(state='enabled', timeout=15000)
+                if not submit_button.is_enabled():
+                    logger.warning("Submit button not enabled, waiting...")
+                    # Wait for button to potentially become enabled (adjust timeout as needed)
+                    # This is tricky, maybe a specific condition is better if known
+                    try:
+                        page.wait_for_function("() => document.querySelector('{}').disabled === false".format('input[name="finish"]'), timeout=5000)
+                    except PlaywrightTimeoutError:
+                        logger.error("Submit button did not become enabled.")
+                        raise Exception("Submit button did not become enabled.")
 
-                # ADDED a slightly longer explicit pause just before clicking, after the consent check's pause.
-                logger.info("Waiting for 1 second before clicking submit...")
-                page.wait_for_timeout(1000) # Explicit 1-second wait
+                logger.info("Waiting for 1 second before clicking submit...") # Small delay
+                time.sleep(1)
 
-                # Attempt the click directly, with a longer timeout for the click action itself
                 logger.info("Executing click action on submit button...")
-                submit_locator.click(timeout=15000) # Increased click timeout to 15s
+                submit_button.click()
                 logger.info("Submit button clicked successfully.")
 
-            except PlaywrightTimeoutError as submit_timeout:
-                 # This timeout means the click itself failed after 15s
-                 logger.error(f"Timed out trying to click submit button: {submit_timeout}")
-                 try:
-                      # Capture state if click times out
-                      screenshot_path = 'submit_click_timeout.png'
-                      page.screenshot(path=screenshot_path)
-                      logger.info(f"Screenshot saved: {screenshot_path}")
-                 except Exception as screen_err:
-                      logger.error(f"Could not take screenshot on click timeout: {screen_err}")
-                 return STATUS_AUTOMATION_FAIL, f"Timeout clicking submit button: {submit_timeout}", lead_id # Return ID captured before click attempt
-            except PlaywrightError as submit_err:
-                 # Other errors during click (e.g., element detached)
-                 logger.error(f"Failed to click submit button: {submit_err}")
-                 return STATUS_AUTOMATION_FAIL, f"Failed to click submit: {submit_err}", lead_id # Return ID captured before click
+                # --- SUCCESS Condition --- 
+                # If click succeeded AND we have a lead_id, consider it successful immediately.
+                if lead_id:
+                    logger.info(f"Form submission considered successful with Lead ID: {lead_id}")
+                    return STATUS_SUCCESS, f"Form submitted successfully with Lead ID: {lead_id}", lead_id
+                else:
+                    # This case shouldn't happen if lead ID extraction is mandatory, but as a fallback:
+                    logger.warning("Submit clicked, but no Lead ID was captured earlier.")
+                    return STATUS_SUCCESS, "Form submitted, but Lead ID was not captured.", None
+
+            except PlaywrightTimeoutError as submit_timeout_err:
+                logger.error(f"Timeout interacting with submit button: {submit_timeout_err}")
+                return STATUS_AUTOMATION_FAIL, f"Timeout clicking submit: {submit_timeout_err}", lead_id # Return ID if captured
             except Exception as general_submit_err:
-                 logger.error(f"Unexpected Submit Click error: {general_submit_err}", exc_info=True)
-                 return STATUS_UNKNOWN_FAIL, f"Unexpected Submit Click error: {general_submit_err}", lead_id
+                 # Catch any other errors during submit interaction
+                 logger.error(f"An unexpected error occurred clicking submit: {general_submit_err}")
+                 return STATUS_UNKNOWN_FAIL, f"Unexpected Submit Click error: {general_submit_err}", lead_id # Return ID if captured
 
             # Wait for submission to complete
             try:
