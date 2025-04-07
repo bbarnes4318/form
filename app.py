@@ -8,12 +8,16 @@ from uszipcode import SearchEngine
 
 # --- Configuration ---
 
-# Load environment variables from .env file if it exists
-load_dotenv()
-
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Set Playwright environment variables for cloud deployment
+os.environ['PLAYWRIGHT_BROWSERS_PATH'] = '0'  # Use browsers from system path
+os.environ['PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD'] = '0'  # Skip browser download
+
+# Load environment variables
+load_dotenv()
 
 # Create Flask app
 app = Flask(__name__)
@@ -159,8 +163,22 @@ def submit_to_external_form_pw(prospect_data, dynamic_proxy_details=None):
             # --- 2. Launch Browser ---
             browser_args = {
                 'headless': True,
-                'args': ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
-                'timeout': 120000 # 2 minutes browser launch timeout
+                'args': [
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-accelerated-2d-canvas',
+                    '--disable-gpu',
+                    '--disable-software-rasterizer',
+                    '--window-size=1280,720',
+                    '--disable-web-security',
+                    '--disable-features=IsolateOrigins,site-per-process',
+                    '--disable-site-isolation-trials',
+                    '--disable-features=BlockInsecurePrivateNetworkRequests'
+                ],
+                'timeout': 180000,  # 3 minutes timeout
+                'chromium_sandbox': False,
+                'ignore_default_args': ['--enable-automation']
             }
             if proxy_options:
                 browser_args['proxy'] = proxy_options
