@@ -1,10 +1,13 @@
 import os
 import time
 import logging
-from flask import Flask, render_template, request, flash, get_flashed_messages
+from flask import Flask, render_template, request, flash, get_flashed_messages, jsonify, send_from_directory, send_file
 from playwright.sync_api import sync_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 from dotenv import load_dotenv
-from uszipcode import SearchEngine
+from datetime import datetime
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # --- Configuration ---
 
@@ -20,17 +23,19 @@ os.environ['PLAYWRIGHT_SKIP_VALIDATION'] = '1'  # Skip browser validation
 # Load environment variables
 load_dotenv()
 
-# Create Flask app
-app = Flask(__name__)
+# Create Flask app configured to serve React build files
+app = Flask(__name__, static_folder='../web/dist', static_url_path='')
 # IMPORTANT: Set a strong secret key in your environment variables for production!
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'change-this-in-production-to-a-real-secret')
 
 # Initialize zip code search engine (globally is fine)
+search = None
 try:
+    from uszipcode import SearchEngine
     search = SearchEngine()
     logger.info("uszipcode SearchEngine initialized.")
 except Exception as e:
-    logger.error(f"Failed to initialize uszipcode SearchEngine: {e}. Nearby zip code search will fail.")
+    logger.error(f"Failed to initialize or import uszipcode SearchEngine: {e}. Nearby zip code search will be disabled.")
     search = None # Set search to None if initialization fails
 
 # Proxy configuration from environment variables
@@ -58,6 +63,79 @@ STATUS_PROXY_CONNECT_FAIL = 'PROXY_CONNECT_FAIL'
 STATUS_NAVIGATION_FAIL = 'NAVIGATION_FAIL'
 STATUS_AUTOMATION_FAIL = 'AUTOMATION_FAIL'
 STATUS_UNKNOWN_FAIL = 'UNKNOWN_FAIL'
+
+# --- Email Functions ---
+def send_email_notification(prospect_data, proxy_ip=None):
+    """Send email notification for new lead submission"""
+    try:
+        # Get email credentials
+        email_user = os.environ.get('EMAIL_USER')
+        email_pass = os.environ.get('EMAIL_PASS')
+        
+        if not email_user or not email_pass:
+            logger.warning("Email credentials not configured, skipping email notification")
+            return False
+            
+        timestamp = datetime.now().isoformat()
+        
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = email_user
+        msg['To'] = 'jimbosky35@gmail.com'
+        msg['Subject'] = 'New Fair Wreck Lead'
+        
+        # HTML body
+        html_body = f"""
+        <h2>New Lead Submission</h2>
+        <ul>
+          <li><b>Name:</b> {prospect_data.get('name', '')}</li>
+          <li><b>Email:</b> {prospect_data.get('email', '')}</li>
+          <li><b>Phone:</b> {prospect_data.get('phone', '')}</li>
+          <li><b>Case:</b> {prospect_data.get('case', '')}</li>
+          <li><b>TCPA Consent:</b> {'Yes' if prospect_data.get('tcpaconsent') else 'No'}</li>
+          <li><b>TrustedForm Certificate URL:</b> <a href="{prospect_data.get('xxTrustedFormCertUrl', '')}">{prospect_data.get('xxTrustedFormCertUrl', '')}</a></li>
+          <li><b>Proxy IP:</b> {proxy_ip or 'No proxy available'}</li>
+        </ul>
+        <p>Timestamp: {timestamp}</p>
+        """
+        
+        msg.attach(MIMEText(html_body, 'html'))
+        
+        # Send email
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(email_user, email_pass)
+        text = msg.as_string()
+        server.sendmail(email_user, 'jimbosky35@gmail.com', text)
+        server.quit()
+        
+        logger.info("Email notification sent successfully")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to send email notification: {e}")
+        return False
+
+def get_proxy_for_phone(phone):
+    """Get proxy configuration based on phone area code"""
+    try:
+        # Extract area code from phone number
+        area_code = ''.join(filter(str.isdigit, phone))[:3]
+        
+        if not PROXY_CONFIGURED:
+            return None
+            
+        proxy_user = f"{PROXY_BASE_USER};zip.{area_code}"
+        
+        return {
+            'host': PROXY_HOST,
+            'port': PROXY_PORT,
+            'user': proxy_user,
+            'pass': PROXY_PASS
+        }
+    except Exception as e:
+        logger.error(f"Error getting proxy for phone {phone}: {e}")
+        return None
 
 # --- Helper Functions ---
 
@@ -519,9 +597,227 @@ def submit_fallback_test_mode(prospect_data, dynamic_proxy_details=None):
     # Return success with the generated lead ID
     return STATUS_SUCCESS, f"TEST MODE: Form submission simulated successfully with Lead ID: {lead_id}", lead_id
 
-# --- Flask Routes ---
-@app.route('/', methods=['GET', 'POST'])
-def index():
+def submit_to_ringba(prospect_data):
+    """
+    Submits prospect data to multiple Ringba enrichment endpoints.
+    
+    Args:
+        prospect_data (dict): Dictionary containing form data with keys:
+            - first_name
+            - last_name
+            - phone
+            - state
+            - zip
+            - age
+    
+    Returns:
+        tuple: (status_code, message)
+    """
+    try:
+        # Format phone number to E.164 format
+        phone = prospect_data['phone']
+        if not phone.startswith('+1'):
+            # Remove any non-digit characters and add +1 prefix
+            phone = '+1' + ''.join(filter(str.isdigit, phone))
+        
+        # List of all Ringba URLs
+        ringba_urls = [
+            "https://display.ringba.com/enrich/2678526310963217804",  # Original URL
+            "https://display.ringba.com/enrich/2665437287541638739",  # New URL 1
+            "https://display.ringba.com/enrich/2447044488598652647",  # New URL 2
+            "https://display.ringba.com/enrich/2679325464287250184"   # New URL 3
+        ]
+        
+        # Common parameters for all requests
+        params = {
+            'callerid': phone,
+            'first_name': prospect_data['first_name'],
+            'last_name': prospect_data['last_name'],
+            'age': prospect_data['age'],
+            'state': prospect_data['state'],
+            'zip': prospect_data['zip'],
+            'webhook_url': 'YOUR_GOOGLE_APPS_SCRIPT_URL'  # Add your Google Apps Script web app URL here
+        }
+        
+        # Make requests to all Ringba URLs
+        import requests
+        success_count = 0
+        failed_urls = []
+        
+        for url in ringba_urls:
+            try:
+                response = requests.get(url, params=params)
+                if response.status_code == 200:
+                    success_count += 1
+                    logger.info(f"Successfully submitted to Ringba URL: {url}")
+                else:
+                    failed_urls.append(url)
+                    logger.error(f"Failed to submit to Ringba URL {url}. Status code: {response.status_code}")
+            except Exception as e:
+                failed_urls.append(url)
+                logger.error(f"Error submitting to Ringba URL {url}: {str(e)}")
+        
+        # Return status based on overall results
+        if success_count == len(ringba_urls):
+            return STATUS_SUCCESS, "Data successfully submitted to all Ringba endpoints"
+        elif success_count > 0:
+            return STATUS_SUCCESS, f"Data submitted to {success_count}/{len(ringba_urls)} Ringba endpoints"
+        else:
+            return STATUS_UNKNOWN_FAIL, f"Failed to submit to any Ringba endpoints"
+            
+    except Exception as e:
+        logger.error(f"Error in submit_to_ringba: {e}")
+        return STATUS_UNKNOWN_FAIL, f"Error submitting to Ringba: {str(e)}"
+
+# --- API Routes ---
+@app.route('/api/submit', methods=['POST', 'OPTIONS'])
+def api_submit():
+    """API endpoint for React frontend form submissions"""
+    # Handle CORS preflight requests
+    if request.method == 'OPTIONS':
+        response = jsonify({})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept, X-Requested-With')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS, GET')
+        return response
+    
+    try:
+        # Get JSON data from request
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': 'No data provided'}), 400
+            
+        # Extract form data
+        name = data.get('name', '').strip()
+        email = data.get('email', '').strip()
+        phone = data.get('phone', '').strip()
+        case_desc = data.get('case', '').strip()
+        trusted_form_cert_url = data.get('xxTrustedFormCertUrl', '')
+        tcpa_consent = data.get('tcpaconsent', False)
+        
+        # Basic validation
+        if not all([name, email, phone, case_desc]):
+            return jsonify({'success': False, 'error': 'All fields are required'}), 400
+        
+        timestamp = datetime.now().isoformat()
+        logger.info(f"{timestamp} - API POST /api/submit from React frontend")
+        logger.info(f"Form submission: {name}, {email}, {phone}")
+        
+        # Get proxy details for area code
+        proxy_details = get_proxy_for_phone(phone)
+        proxy_ip = f"{proxy_details['host']}:{proxy_details['port']}" if proxy_details else 'No proxy available'
+        
+        # Prepare prospect data for email
+        prospect_data = {
+            'name': name,
+            'email': email,
+            'phone': phone,
+            'case': case_desc,
+            'xxTrustedFormCertUrl': trusted_form_cert_url,
+            'tcpaconsent': tcpa_consent
+        }
+        
+        # Send email notification
+        email_sent = send_email_notification(prospect_data, proxy_ip)
+        
+        if email_sent:
+            logger.info("Lead submission processed successfully")
+            response = jsonify({'success': True, 'proxyIP': proxy_ip})
+        else:
+            logger.warning("Email sending failed, but submission received")
+            response = jsonify({'success': True, 'proxyIP': proxy_ip, 'warning': 'Email notification failed'})
+        
+        # Add CORS headers
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error processing API submission: {e}")
+        response = jsonify({'success': False, 'error': 'Internal server error'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        return response, 500
+
+# --- Static File Routes for React App ---
+@app.route('/')
+@app.route('/privacy')
+@app.route('/terms')
+def serve_react_app():
+    """Serve the React application for frontend routes"""
+    try:
+        return send_file('../web/dist/index.html')
+    except FileNotFoundError:
+        # Fallback to old form if React build doesn't exist yet
+        return render_template('form.html')
+
+@app.route('/assets/<path:filename>')
+def serve_react_assets(filename):
+    """Serve React build assets (CSS, JS, etc.)"""
+    return send_from_directory('../web/dist/assets', filename)
+
+# --- Legacy Form Routes (keeping for backward compatibility) ---
+@app.route('/form')
+def legacy_form():
+    """Legacy form route"""
+    return render_template('form.html')
+
+@app.route('/final-expense', methods=['GET', 'POST'])
+def final_expense():
+    # Force template reload by adding a timestamp parameter
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    
+    if request.method == 'POST':
+        # Get form data
+        first_name = request.form.get('first_name')
+        last_name = request.form.get('last_name')
+        phone = request.form.get('phone')
+        state = request.form.get('state')
+        zip_code = request.form.get('zip')
+        age = request.form.get('age')
+        
+        # Basic validation
+        if not all([first_name, last_name, phone, state, zip_code, age]):
+            flash('Please fill in all required fields', 'error')
+            return render_template('final_expense_landing.html', timestamp=timestamp)
+        
+        # Validate zip code format
+        if not zip_code.isdigit() or len(zip_code) != 5:
+            flash('Please enter a valid 5-digit zip code', 'error')
+            return render_template('final_expense_landing.html', timestamp=timestamp)
+        
+        # Validate phone number format
+        phone_digits = ''.join(filter(str.isdigit, phone))
+        if len(phone_digits) != 10:
+            flash('Please enter a valid 10-digit phone number', 'error')
+            return render_template('final_expense_landing.html', timestamp=timestamp)
+        
+        # Prepare prospect data
+        prospect_data = {
+            'first_name': first_name,
+            'last_name': last_name,
+            'phone': phone,
+            'state': state,
+            'zip': zip_code,
+            'age': age
+        }
+        
+        # Submit to Ringba
+        ringba_status, ringba_message = submit_to_ringba(prospect_data)
+        
+        if ringba_status == STATUS_SUCCESS:
+            flash('Thank you for your submission! We will contact you shortly.', 'success')
+        else:
+            flash(f'Error submitting your information: {ringba_message}', 'error')
+        
+        return render_template('final_expense_landing.html', timestamp=timestamp)
+    
+    # GET request - show the form
+    return render_template('final_expense_landing.html', timestamp=timestamp)
+
+@app.route('/legacy', methods=['GET', 'POST'])
+def legacy_index():
     """Handles GET request for form display and POST request for submission."""
     if request.method == 'GET':
         return render_template('form.html')

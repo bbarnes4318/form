@@ -3,5 +3,6 @@ playwright==1.42.0
 gunicorn==21.2.0
 python-dotenv==1.0.1
 uszipcode==1.0.1
-sqlalchemy==1.4.46
-sqlalchemy-mate==1.4.28.3 
+sqlalchemy>=2.0.0,<3.0.0
+sqlalchemy-mate==2.0.0.3
+requests==2.31.0 
